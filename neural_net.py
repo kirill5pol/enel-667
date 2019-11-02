@@ -53,9 +53,10 @@ class NeuralNet(object):
         with open(filename, "rb") as f:
             self.params = pickle.load(f)
 
-    def prediction(self, x):
+    def prediction_save_cache(self, x):
         """
-        Compute prediction for the fully-connected net.
+        Compute prediction for the fully-connected net and save intermediate 
+        activations.
 
         N samples, D dims per sample, each sample is a row vec, M is the dims of
         y/prediction
@@ -80,7 +81,7 @@ class NeuralNet(object):
         caches["affine_out"] = cache
         return output, caches
 
-    def prediction_no_cache(self, x):
+    def prediction(self, x):
         """
         Compute prediction for the fully-connected net without saving cache.
 
@@ -108,7 +109,7 @@ class NeuralNet(object):
         else:
             raise ValueError("y has incorrect shape")
 
-        output, caches = self.prediction(x)  # Forward pass
+        output, caches = self.prediction_save_cache(x)  # Forward pass
         grads = {}
 
         # Calculate the loss for the current batch =============================

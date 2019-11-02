@@ -115,7 +115,7 @@ xs = np.random.randint(100, size=int(1e4)).reshape(-1, 1)
 ys = np.sqrt(xs)
 nn = NeuralNet(input_dim=1, output_dim=1, reg=0.0)
 nn.train_loop(xs, ys, batch_size=32, n_steps=int(1e4), print_steps=500, lr=0.01)
-for i, p in [(i, f"{nn.prediction_no_cache([i])[0][0]:6.3f}") for i in range(-10, 10)]:
+for i, p in [(i, f"{nn.prediction([i])[0][0]:6.3f}") for i in range(-10, 10)]:
     print(np.sqrt(i), p)
 
 
@@ -124,5 +124,5 @@ xs = np.random.randint(20, size=int(1e5)).reshape(-1, 1) - 10
 ys = xs ** 2
 nn = NeuralNet(input_dim=1, output_dim=1, hidden_dims=[10, 10], reg=0.001)
 nn.train_loop(xs, ys, batch_size=64, n_steps=int(1e4), print_steps=100, lr=0.001)
-for i, p in [(i, f"{nn.prediction_no_cache([i])[0][0]:6.3f}") for i in range(-10, 10)]:
+for i, p in [(i, f"{nn.prediction([i])[0][0]:6.3f}") for i in range(-10, 10)]:
     print(i ** 2, p)
