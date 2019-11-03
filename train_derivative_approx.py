@@ -77,10 +77,10 @@ def generate_training_set(N, dist_type="uniform"):
         xs[:, 2] = np.random.uniform(low=MIN_ALPHA_DOT, high=MAX_ALPHA_DOT, size=N)
         xs[:, 3] = np.random.uniform(low=MIN_THETA_DOT, high=MAX_THETA_DOT, size=N)
     elif dist_type == "normal":
-        xs[:, 0] = np.random.uniform(loc=0.0, scale=0.25 * MAX_ALPHA, size=N)
-        xs[:, 1] = np.random.uniform(loc=0.0, scale=0.25 * MAX_THETA, size=N)
-        xs[:, 2] = np.random.uniform(loc=0.0, scale=0.25 * MAX_ALPHA_DOT, size=N)
-        xs[:, 3] = np.random.uniform(loc=0.0, scale=0.25 * MAX_THETA_DOT, size=N)
+        xs[:, 0] = np.random.normal(loc=0.0, scale=0.25 * MAX_ALPHA, size=N)
+        xs[:, 1] = np.random.normal(loc=0.0, scale=0.25 * MAX_THETA, size=N)
+        xs[:, 2] = np.random.normal(loc=0.0, scale=0.25 * MAX_ALPHA_DOT, size=N)
+        xs[:, 3] = np.random.normal(loc=0.0, scale=0.25 * MAX_THETA_DOT, size=N)
     else:
         raise ValueError("Choose one of ['normal', 'uniform']")
 
