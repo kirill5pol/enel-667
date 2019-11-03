@@ -116,6 +116,13 @@ def main():
         help="The frequency of samples on the Quanser hardware.",
     )
     parser.add_argument(
+        "-r",
+        "--regularization",
+        default=0.001,
+        type=str,
+        help="The frequency of samples on the Quanser hardware.",
+    )
+    parser.add_argument(
         "-ne",
         "--num-examples",
         default=1e6,
@@ -133,6 +140,7 @@ def main():
     lr = args.learning_rate
     ps = args.print_steps
     ne = int(args.num_examples)
+    reg = float(args.regularization)
 
     def print_fn(step, ps=ps):
         """If step < ps, print at squares, else print multiples of ps"""
@@ -147,12 +155,12 @@ def main():
     xs, ys = generate_training_set(ne)
     N, D = xs.shape
     Ny, M = ys.shape
-    nn = NeuralNet(input_dim=D, output_dim=M, hidden_dims=[10, 10], reg=0.001)
+    nn = NeuralNet(input_dim=D, output_dim=M, hidden_dims=[100, 100], reg=reg)
     try:
         nn.train_loop(xs, ys, batch_size=bs, n_steps=ns, print_steps=print_fn, lr=lr)
     finally:
         nn.save(
-            f"data/nn_deriv_approx_bs{bs}_ns{args.train_steps}_"
+            f"data/nn_deriv_approx-bs{bs}-ns{args.train_steps}-reg{reg}-"
             + str(np.random.randint(1000))
         )
 
