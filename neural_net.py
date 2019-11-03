@@ -42,13 +42,13 @@ class NeuralNet(object):
         self.params["w_out"] = weight_init(input_dims[-1], output_dim)
         self.params["b_out"] = bias_init(output_dim)
 
-    def save(filename):
+    def save(self, filename):
         """Save paramters to `filename`."""
         with open(filename, "wb") as f:
             pickle.dump(self.params, f)
         print("Saved neural network parameters to:", filename)
 
-    def load(filename):
+    def load(self, filename):
         """Load paramters from `filename`."""
         with open(filename, "rb") as f:
             self.params = pickle.load(f)
@@ -156,7 +156,9 @@ class NeuralNet(object):
         for key, grad in grads.items():
             self.params[key] -= lr * grad  # Gradient step
 
-    def train_loop(self, xs, ys, batch_size=64, n_steps=10, print_steps=1000, lr=0.01):
+    def train_loop(
+        self, xs, ys, batch_size=32, n_steps=1e5, print_steps=1000, lr=0.001
+    ):
         """
         Run a training loop on the neural network with inputs xs and outputs ys.
 
@@ -182,7 +184,7 @@ class NeuralNet(object):
             # Return true if step is a multiple of print_steps
             print_steps = lambda step: step % print_steps == 0
 
-        for step in range(n_steps):
+        for step in range(int(n_steps)):
             # Sample a minibatch from the samples
             indices = np.random.choice(N, size=batch_size, replace=False)
             x_batch, y_batch = xs[indices], ys[indices]
