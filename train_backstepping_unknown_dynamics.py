@@ -67,7 +67,7 @@ def generate_u(xs):
     assert D == 5
 
     us = np.zeros((N,))
-    for i in range(D):
+    for i in range(N):
         us[i] = flip_and_hold_policy(xs[i, :4])
     return us
 
