@@ -1,18 +1,42 @@
-from gym_brt.control import flip_and_hold_policy
 from neural_net import NeuralNet
-
 import numpy as np
 import argparse
 
+
 # Constant
-MIN_U, MAX_U = -3.0, 3.0
+MIN_U, MAX_U = -3.0, 3.0  # This is limited to prevent damage to hardware
 MIN_ALPHA, MAX_ALPHA = -np.pi, np.pi
 MIN_THETA, MAX_THETA = -np.pi, np.pi
-MIN_ALPHA_DOT, MAX_ALPHA_DOT = -30.0, 30.0  # Double check this
-MIN_THETA_DOT, MAX_THETA_DOT = -30.0, 30.0  # Double check this
+MIN_ALPHA_DOT, MAX_ALPHA_DOT = -30.0, 30.0  # Fairly reasonable assumption
+MIN_THETA_DOT, MAX_THETA_DOT = -30.0, 30.0  # Fairly reasonable assumption
 
 
-def diff_forward_model(xs):
+def gen_us(xs):
+    """
+    Run the energy + pd controller to get the optimal action u.
+
+    Input:
+        xs: The states, shape (N,4)
+    Output:
+        us: The actions, shape (N,)
+    """
+    N, D = xs.shape
+    assert D == 4
+
+    us = np.zeros((N,))
+    for i in range(N):
+        us[i] = flip_and_hold_policy(xs[i])
+    return us
+
+
+def gen_ys(xs):
+    """
+    Create the labels for the neural network.
+    We use just the derivates to make it easier to tweak backstepping control
+    architectures in the future (easier to just train f(x,u) = x_dot than
+    f2 = -x3 + theta_dot_dot & f4 = -eta*u + alpha_dot_dot ->  for example we 
+    can change eta after training the neural net!)
+    """
     N, D = xs.shape
 
     g = 9.81  # Gravity constant
@@ -34,25 +58,13 @@ def diff_forward_model(xs):
     alpha_dot_dots = (2.0*Lp*Lr*mp*(4.0*Dr*theta_dots + Lp**2*alpha_dots*mp*theta_dots*np.sin(2.0*alphas) + 2.0*Lp*Lr*alpha_dots**2*mp*np.sin(alphas) - 4.0*taus)*np.cos(alphas) - 0.5*(4.0*Jr + Lp**2*mp*np.sin(alphas)**2 + 4.0*Lr**2*mp)*(-8.0*Dp*alpha_dots + Lp**2*mp*theta_dots**2*np.sin(2.0*alphas) + 4.0*Lp*g*mp*np.sin(alphas)))/(4.0*Lp**2*Lr**2*mp**2*np.cos(alphas)**2 - (4.0*Jp + Lp**2*mp)*(4.0*Jr + Lp**2*mp*np.sin(alphas)**2 + 4.0*Lr**2*mp))
     # fmt: on
 
-    d_state = np.zeros((N, 4))
-    d_state[:, 0] = theta_dots
-    d_state[:, 1] = alpha_dots
-    d_state[:, 2] = theta_dot_dots
-    d_state[:, 3] = alpha_dot_dots
-    return d_state
+    ys = np.zeros((N, 2))
+    ys[:, 0] = theta_dot_dots
+    ys[:, 1] = alpha_dot_dots
+    return ys
 
 
-def generate_u(xs):
-    N, D = xs.shape
-    assert D == 5
-
-    us = np.zeros((N,))
-    for i in range(D):
-        us[i] = flip_and_hold_policy(xs[i, :4])
-    return us
-
-
-def generate_training_set(N, dist_type="uniform"):
+def gen_xs(N, dist_type="uniform"):
     """
     Generate an arbitrary number of training points from the set of possible 
     points. Data is distributed along the reasonable values for state and 
@@ -86,8 +98,10 @@ def generate_training_set(N, dist_type="uniform"):
 
     # U is likely going to be close to what a swingup + LQR controller will give
     # so condition it on the state: u_dataset = u_lqr + noise
-    xs[:, 4] = generate_u(xs) + np.random.rand(N) * 3
-    ys = diff_forward_model(xs)
+    # Not this actually gets relativly far away from the LQR controller (control
+    # range is -3.0 to 3.0, so this gets as far as +- 1.0 away often)
+    xs[:, 4] = gen_us(xs[:, :4]) + np.random.rand(N)
+    ys = gen_ys(xs)
     return xs, ys
 
 
@@ -97,71 +111,78 @@ def main():
     parser.add_argument(
         "-s",
         "--train-steps",
-        default="1e5",
+        default="1e6",
         type=str,
-        help="Number of training steps to take",
+        help="Number of training steps to take.",
     )
     parser.add_argument(
         "-bs",
         "--batch-size",
         default=64,
         type=int,
-        help="The frequency of samples on the Quanser hardware.",
+        help="The batch size for training (larger means faster training, smaller generalizes better).",
     )
     parser.add_argument(
         "-lr",
         "--learning-rate",
         default=0.001,
         type=float,
-        help="The frequency of samples on the Quanser hardware.",
+        help="The learning rate for gradient descent.",
     )
     parser.add_argument(
         "-r",
         "--regularization",
         default=0.001,
         type=str,
-        help="The frequency of samples on the Quanser hardware.",
+        help="The L2 regularization multiplier for the neural network training.",
+    )
+    parser.add_argument(
+        "-d",
+        "--dropout",
+        default=0.7,
+        type=str,
+        help="The `keep` probability for dropout.",
     )
     parser.add_argument(
         "-ne",
         "--num-examples",
-        default=1e6,
+        default=1e5,
         type=float,
         help="How many samples to generate for the derivative aprroximation (ie"
         + "how many points are generated).",
     )
     parser.add_argument(
-        "-ps", "--print-steps", default=1000, type=float, help="How often to print."
+        "-pi", "--print-interval", default=1000, type=float, help="How often to print."
+    )
+    parser.add_argument(
+        "-si", "--save-interval", default=10000, type=float, help="How often to save."
     )
     args, _ = parser.parse_known_args()
 
     ns = int(float(args.train_steps))
     bs = args.batch_size
     lr = args.learning_rate
-    ps = args.print_steps
+    pi = int(args.print_interval)
+    si = int(args.save_interval)
     ne = int(args.num_examples)
     reg = float(args.regularization)
 
-    def print_fn(step, ps=ps):
-        """If step < ps, print at squares, else print multiples of ps"""
-        if step < ps:
-            if np.sqrt(step) - int(np.sqrt(step)) < 1e-5:
-                return True
-        else:
-            if step % ps == 0:
-                return True
-        return False
-
-    xs, ys = generate_training_set(ne)
+    xs, ys = gen_xs(ne, generate_derivatives, generate_u, "normal")
     N, D = xs.shape
     Ny, M = ys.shape
-    nn = NeuralNet(input_dim=D, output_dim=M, hidden_dims=[100, 100], reg=reg)
+
+    # Generate a testing set for looking at the mean percent error
+    xs_test, ys_test = gen_xs(ne, generate_derivatives, generate_u, "normal")
+
+    # Create the neural network
+    nn = NeuralNet([200, 200], D, M, reg, dropout)
+
+    # Run the train loop and save the network (works even if you stop training early)
     try:
-        nn.train_loop(xs, ys, batch_size=bs, n_steps=ns, print_steps=print_fn, lr=lr)
+        nn.train_loop(xs, ys, xs_test, ys_test, bs, ns, pi, si, lr)
     finally:
         nn.save(
-            f"data/nn_deriv_approx-bs{bs}-ns{args.train_steps}-reg{reg}-"
-            + str(np.random.randint(1000))
+            f"data/deriv_approx-bs{bs}-ns{args.train_steps}-reg{reg}-{np.random.randint(1000)}"
         )
 
 

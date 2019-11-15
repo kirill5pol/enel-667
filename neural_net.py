@@ -1,5 +1,6 @@
-from nn_layers import relu, d_relu, affine, d_affine
+from nn_layers import relu, d_relu, affine, d_affine, dropout, d_dropout
 from nn_utils import weight_init, bias_init
+from utils import mean_percent_error
 
 import numpy as np
 import pickle
@@ -7,7 +8,13 @@ import pickle
 
 class NeuralNet(object):
     def __init__(
-        self, hidden_dims=[30, 30], input_dim=4, output_dim=1, grad_clip=5, reg=0.01
+        self,
+        hidden_dims=[30, 30],
+        input_dim=4,
+        output_dim=1,
+        grad_clip=5,
+        reg=0.01,
+        dropout=0.7,
     ):
         """
         Create a simple multi-layer perceptron network with a number of hidden
@@ -21,13 +28,15 @@ class NeuralNet(object):
                 Either False (disable gradient clipping) or a number maximum abs 
                 value of the gradient
             reg         : L2 regularization scale (==0.0 for no regularization)
+            dropout     : The probability of keeping each neuron in dropout
         """
         self.n_hidden = len(hidden_dims)
-        self.output_dim = output_dim
-        self.input_dim = input_dim
+        self.M = output_dim
+        self.D = input_dim
         self.grad_clip = grad_clip
         self.params = {}
         self.reg = reg  # Strength of L2 regulariation
+        self.dropout = dropout  # The `keep` probability for dropout
 
         # For each layer get the input and output dimensions
         input_dims = [input_dim] + hidden_dims  # By default: [4, 10, 10]
@@ -70,11 +79,12 @@ class NeuralNet(object):
         caches = {}
         h = x  # Input into the next layer or previous hidden activation
         for l in range(self.n_hidden):
-            w, b = self.params["w" + str(l)], self.params["b" + str(l)]
-            h, cache = affine(h, w, b)  # Affine layer
-            caches["affine" + str(l)] = cache
-            h, cache = relu(h)  # Activation (ReLU)
-            caches["relu" + str(l)] = cache
+            l = str(l)
+            w, b = self.params["w" + l], self.params["b" + l]
+            h, caches["affine" + l] = affine(h, w, b)  # Affine layer
+            h, caches["relu" + l] = relu(h)  # Activation (ReLU)
+            # Dropout layer (train-time dropout)
+            h, caches["dropout" + l] = dropout(h, self.dropout)
 
         # Output layer, simply an affine
         output, cache = affine(h, self.params["w_out"], self.params["b_out"])
@@ -83,7 +93,8 @@ class NeuralNet(object):
 
     def prediction(self, x):
         """
-        Compute prediction for the fully-connected net without saving cache.
+        Compute prediction for the fully-connected net as test time (without
+        saving cache and no-dropout).
 
         Input: 
             x: A numpy array of input data, shape (N, D)
@@ -92,13 +103,44 @@ class NeuralNet(object):
         """
         h = x  # Input into the next layer or previous hidden activation
         for l in range(self.n_hidden):
-            w, b = self.params["w" + str(l)], self.params["b" + str(l)]
+            l = str(l)
+            w = self.params["w" + l]
+            b = self.params["b" + l]
             h, _ = affine(h, w, b)  # Affine layer
             h, _ = relu(h)  # Activation (ReLU)
 
         # Output layer, simply an affine
         output, _ = affine(h, self.params["w_out"], self.params["b_out"])
         return output
+
+    def prediction_baysian_dropout(self, x, k=10):
+        """
+        Runs test time prediction k times to get a variance on the output.
+        Essentially bayesian dropout.
+
+        Input: 
+            x: A numpy array of input data, shape (N, D)
+        Return:
+            mean: The mean prediction from the dropout ensemble, shape (N, M)
+            var: The variance on the prediction from the ensemble, shape (N, M)
+        """
+        N, D = x.shape
+        outputs = np.zeros((k, N, self.M))
+
+        for i in range(k):
+            h = x  # Input into the next layer or previous hidden activation
+            for l in range(self.n_hidden):
+                w, b = self.params["w" + str(l)], self.params["b" + str(l)]
+                h, _ = affine(h, w, b)  # Affine layer
+                h, _ = relu(h)  # Activation (ReLU)
+
+            # Output layer, simply an affine
+            outputs[i], _ = affine(h, self.params["w_out"], self.params["b_out"])
+
+        mean = np.mean(outputs)
+        var = np.var(output)
+
+        return mean, var
 
     def loss(self, x, y=None):
         """Compute loss and gradient for the fully-connected net."""
@@ -131,20 +173,23 @@ class NeuralNet(object):
         grads["b_out"] = db + self.reg * self.params["b_out"]
         # Backprop through each hidden layer
         for l in reversed(range(self.n_hidden)):
-            dout = d_relu(dout, caches["relu" + str(l)])
-            dout, dw, db = d_affine(dout, caches["affine" + str(l)])
+            l = str(l)
+            dout = d_dropout(dout, caches["dropout" + l])
+            dout = d_relu(dout, caches["relu" + l])
+            dout, dw, db = d_affine(dout, caches["affine" + l])
+
             # Save gradients into a dictionary where the key matches the param key
-            grads["w" + str(l)] = dw + self.reg * self.params["w" + str(l)]
-            grads["b" + str(l)] = db + self.reg * self.params["b" + str(l)]
+            grads["w" + l] = dw + self.reg * self.params["w" + l]
+            grads["b" + l] = db + self.reg * self.params["b" + l]
 
         # Clip gradients if enabled - really helps stability! ==================
         if self.grad_clip is not False:
             for key, grad in grads.items():
                 grads[key] = np.clip(grads[key], -self.grad_clip, self.grad_clip)
 
-        return loss, grads  # , dout
+        return loss, grads
 
-    def gradient_step(self, grads, lr=0.01):
+    def gradient_step(self, grads, lr=0.001):
         """
         A single step of gradient descent.
 
@@ -157,18 +202,33 @@ class NeuralNet(object):
             self.params[key] -= lr * grad  # Gradient step
 
     def train_loop(
-        self, xs, ys, batch_size=32, n_steps=1e5, print_steps=1000, lr=0.001
+        self,
+        xs,
+        ys,
+        xs_test,
+        ys_test,
+        batch_size=32,
+        n_steps=1e5,
+        print_interval=1000,
+        lr=0.001,
     ):
         """
         Run a training loop on the neural network with inputs xs and outputs ys.
 
+        Note the test data should *NOT* be used for training. Only testing to
+        see what the mean percent error is on the dataset.
+
         Input:
             xs: A numpy array of inputs, shape (N, D)
             ys: A numpy array of matching outputs (y = f(x)), shape (N, M)
+            xs_test: A numpy array of inputs for testing, shape (NT, D)
+            ys_test: A numpy array of matching outputs (y = f(x)), shape (NT, M)
             batch_size: Number of samples to use in a single step
             n_steps: Number of gradient steps to run training
-            print_steps: Either a int or a function that take step number and
+            print_interval: Either a int or a function that take step number and
                 returns `True` if it should print at that step.
+            save_interval: Either a int or a function that take step number and
+                returns `True` if it should save at that step.
             lr: learning rate (or beta)
         """
         xs = np.asarray(xs)  # Convert to numpy array if not already one
@@ -179,10 +239,22 @@ class NeuralNet(object):
         assert D == self.input_dim  # Check that the output dim matches the NN
         assert N == Ny  # Check that xs and ys have the same number of samples
 
-        # If print_steps is not a function convert it to one
-        if not callable(print_steps):
-            # Return true if step is a multiple of print_steps
-            print_steps = lambda step: step % print_steps == 0
+        Nx_test, D_test = xs_test.shape
+        Ny_test, M_test = ys_test.shape
+        assert M == M_test  # Check that the test data shapes match train
+        assert D == D_test  # Check that the test data shapes match train
+
+        # If print_interval is not a function convert it to one
+        if not callable(print_interval):
+            # Return true if step is a multiple of print_interval
+            print_interval = lambda step: step % print_interval == 0
+
+        # If save_interval is not a function convert it to one
+        if not callable(save_interval):
+            # Return true if step is a multiple of save_interval
+            save_interval = lambda step: step % save_interval == 0
+
+        rand = np.random.randint(1000)
 
         for step in range(int(n_steps)):
             # Sample a minibatch from the samples
@@ -191,5 +263,12 @@ class NeuralNet(object):
             loss, grads = self.loss(x_batch, y=y_batch)
             self.gradient_step(grads, lr=lr)
 
-            if print_steps(step):
-                print(f"MSE loss: {loss:6.3f}, train step: {step}")
+            if print_interval(step):
+                # Calculate mean percent error
+                mpe_train = mean_percent_error(self, xs, ys)
+                mpe_test = mean_percent_error(self, xs_test, ys_test)
+                print(
+                    f"MSE loss: {loss:6.3f}, MPE train: {mpe_train:6.3f}, MPE test: {mpe_test:6.3f}, train step: {step}"
+                )
+            if save_interval(step):
+                self.save(f"data/partial-train/model-{rand}_step-{step}")
