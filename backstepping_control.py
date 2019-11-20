@@ -1,11 +1,15 @@
 # from train_backstepping_unknown_dynamics import generate_unkown_dyn_labels as f2f4
 from neural_net import NeuralNet
 from utils import HighPassFilter
-from gym_brt.control import flip_and_hold_policy
+from gym_brt.control import flip_and_hold_policy as fhp
 import numpy as np
 
 
-def f_real(x, u, nn=None, eta=2000):
+def flip_and_hold_policy(state, **kwargs):
+    return np.clip(fhp(state, **kwargs), -3, 3)
+
+
+def f_real(x, u, nn, eta):
     """
     Exact solutions to the functions in the backstepping controller.
     
@@ -44,11 +48,11 @@ def f_real(x, u, nn=None, eta=2000):
     f1 = theta_dot  # f1
     f2 = theta_dot_dot - alpha  # f2 = -x3 + theta_dot_dot = theta_dot_dot - alpha
     f3 = alpha_dot  # f3
-    f4 = alpha_dot_dot - ETA * u  # f4 = -eta*u + alpha_dot_dot
+    f4 = alpha_dot_dot - eta * u  # f4 = -eta*u + alpha_dot_dot
     return [f1, f2, f3, f4]
 
 
-def f_approx(x, u, nn, eta=2000):
+def f_approx(x, u, nn, eta):
     """
     Function approximation for the backtepping controller.
     
@@ -77,7 +81,7 @@ def f_approx(x, u, nn, eta=2000):
     f1 = theta_dot  # f1
     f2 = theta_dot_dot - alpha  # f2 = -x3 + theta_dot_dot = theta_dot_dot - alpha
     f3 = alpha_dot  # f3
-    f4 = alpha_dot_dot - ETA * u  # f4 = -eta*u + alpha_dot_dot
+    f4 = alpha_dot_dot - eta * u  # f4 = -eta*u + alpha_dot_dot
     return [f1, f2, f3, f4]
 
 
@@ -97,7 +101,7 @@ class BacksteppingController(object):
         #     For the full system I got this: 9829.27
         #     (from wolfram alpha: https://tinyurl.com/y3kgcn38)
         #     So if 100 doesn't work try 10_000 or 20_000
-        eta = 2000
+        eta = 20000000
 
         c1, c2, c3, c4 = 1, 1, 2, 2
         x1, x2, x3, x4 = state
@@ -106,7 +110,7 @@ class BacksteppingController(object):
             state, flip_and_hold_policy(state), self.nn, eta
         )
 
-        x1d = np.sin(0.1 * step / self.freq)  # Sin wave? # Desired theta
+        x1d = 0  # np.sin(0.1 * step / self.freq)  # Sin wave? # Desired theta
         z1 = x1 - x1d
         x1d_dot = (x1d - self.x1d_prev) * self.freq
 
@@ -123,6 +127,7 @@ class BacksteppingController(object):
         x4d_dot = (x4d - self.x4d_prev) * self.freq
 
         u = 0.5 * eta * (-c4 * (2 * z4 + x4d) - 2 * z3 - 2 * f4_hat - x3d + x4d_dot)
+        u = np.clip(u, -3, 3)
         print(u)
         return u
 
