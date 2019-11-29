@@ -1,12 +1,12 @@
 # from train_backstepping_unknown_dynamics import generate_unkown_dyn_labels as f2f4
 from neural_net import NeuralNet
 from utils import HighPassFilter
-from gym_brt.control import flip_and_hold_policy as fhp
+from gym_brt.control import flip_and_hold_policy
 import numpy as np
 
 
-def flip_and_hold_policy(state, **kwargs):
-    return np.clip(fhp(state, **kwargs), -3, 3)
+def fhp(state, **kwargs):
+    return np.clip(flip_and_hold_policy(state, **kwargs), -3, 3)
 
 
 def f_real(x, u, nn, eta):
@@ -95,6 +95,9 @@ class BacksteppingController(object):
         self.x3d_prev = 0
         self.x4d_prev = 0
 
+        self.v_dot_max = -1000  # Some initial negative number
+        self.prev_u = 0
+
     def action(self, state, step):
         # Eta information:
         #     The value of k_u_alpha_dot = 49.1493074 in the linearized version
@@ -103,14 +106,14 @@ class BacksteppingController(object):
         #     So if 100 doesn't work try 10_000 or 20_000
         eta = 20000000
 
-        c1, c2, c3, c4 = 1, 1, 2, 2
+        k_scale = 1
+        c1, c2, c3, c4 = k_scale * 1, k_scale * 1, k_scale * 2, k_scale * 2
         x1, x2, x3, x4 = state
 
-        f1_hat, f2_hat, f3_hat, f4_hat = f_real(
-            state, flip_and_hold_policy(state), self.nn, eta
-        )
+        # f1_hat, f2_hat, f3_hat, f4_hat = f_real(state, fhp(state), self.nn, eta)
+        f1_hat, f2_hat, f3_hat, f4_hat = f_real(state, self.prev_u, self.nn, eta)
 
-        x1d = 0  # np.sin(0.1 * step / self.freq)  # Sin wave? # Desired theta
+        x1d = 0
         z1 = x1 - x1d
         x1d_dot = (x1d - self.x1d_prev) * self.freq
 
@@ -128,21 +131,42 @@ class BacksteppingController(object):
 
         u = 0.5 * eta * (-c4 * (2 * z4 + x4d) - 2 * z3 - 2 * f4_hat - x3d + x4d_dot)
         u = np.clip(u, -3, 3)
-        print(u)
+
+        # Calculate dmax and v_dot
+        f1_actual, f2_actual, f3_actual, f4_actual = f_real(state, u, self.nn, eta)
+        # Technically incorrect (but should work due to symmetry)
+        dx1, dx3 = np.abs(f1_actual - f1_hat), np.abs(f3_actual - f3_hat)
+        dx2, dx4 = np.abs(f2_actual - f2_hat), np.abs(f4_actual - f4_hat)
+        v_dot = (
+            -c1 * z1 ** 2
+            - c2 * z2 ** 2
+            - c3 * (z3 + x3) ** 2
+            - c4 * (z4 + x4) ** 2
+            + dx2 * z2 ** 2
+            + dx4 * (z4 + x4) ** 2
+        )
+        if v_dot > self.v_dot_max:
+            self.v_dot_max = v_dot
+        # print(
+        #     f"u={u[0]:6.3f}, dx={dx2[0]},{dx4[0]} v_dot={v_dot[0]}, v_dot_max={self.v_dot_max[0]}, state={state[0]:6.3f},{state[1]:6.3f},{state[2]:6.3f},{state[3]:6.3f}"
+        # )
+        print(
+            f"u={u:6.3f}, dx={dx2},{dx4} v_dot={v_dot}, v_dot_max={self.v_dot_max}, state={state[0]:6.3f},{state[1]:6.3f},{state[2]:6.3f},{state[3]:6.3f}"
+        )
         return u
 
 
 def run_backstepping():
     from gym_brt.envs import QubeSwingupEnv, QubeBalanceEnv
 
+    bs = BacksteppingController()
     with QubeBalanceEnv(use_simulator=True, frequency=250) as env:
         while True:
             state = env.reset()
-            # env.qube.state += np.random.randn(4) * 0.01
+            env.qube.state = np.random.randn(4) * 0.00001
             state, _, done, _ = env.step(np.array([0]))
-
-            bs = BacksteppingController()
             step = 0
+            print("\n\nResetting\n\n")
             while not done:
                 action = bs.action(state, step)
                 state, _, done, _ = env.step(action)
