@@ -1,12 +1,20 @@
-from nn_layers import relu, d_relu, affine, d_affine, dropout, d_dropout
-from nn_utils import weight_init, bias_init
-from utils import mean_percent_error
+from utils import (
+    mean_percent_error,
+    weight_init,
+    bias_init,
+    relu,
+    d_relu,
+    affine,
+    d_affine,
+    dropout,
+    d_dropout,
+)
 
 import numpy as np
 import pickle
 
 
-class NeuralNet(object):
+class NeuralNetBase(object):
     def __init__(
         self,
         hidden_dims=[30, 30],
@@ -15,6 +23,8 @@ class NeuralNet(object):
         grad_clip=5,
         reg=0.01,
         dropout=0.7,
+        beta=0.05,
+        nu=0.05,
     ):
         """
         Create a simple multi-layer perceptron network with a number of hidden
@@ -29,6 +39,8 @@ class NeuralNet(object):
                 value of the gradient
             reg         : L2 regularization scale (==0.0 for no regularization)
             dropout     : The probability of keeping each neuron in dropout
+            beta        : (β) Adaption gain (or learning rate)
+            nu          : (ν) E-mod gain
         """
         self.n_hidden = len(hidden_dims)
         self.M = output_dim
@@ -37,6 +49,8 @@ class NeuralNet(object):
         self.params = {}
         self.reg = reg  # Strength of L2 regulariation
         self.dropout = dropout  # The `keep` probability for dropout
+        self.beta = beta
+        self.nu = nu
 
         # For each layer get the input and output dimensions
         input_dims = [input_dim] + hidden_dims  # By default: [4, 10, 10]
@@ -61,6 +75,34 @@ class NeuralNet(object):
         """Load paramters from `filename`."""
         with open(filename, "rb") as f:
             self.params = pickle.load(f)
+
+    def prediction(self, x, z):
+        raise NotImplementedError
+
+
+class NeuralNetOffline(NeuralNetBase):
+    def prediction(self, x, z):
+        """
+        Compute prediction for the fully-connected net as test time (without
+        saving cache and no-dropout).
+
+        Input: 
+            x: A numpy array of input data, shape (N, D)
+            x_des: Compatibility with the adaptive NN (not used)
+        Return:
+            output: Output prediction/prediction of label, shape (N, M)
+        """
+        h = x  # Input into the next layer or previous hidden activation
+        for l in range(self.n_hidden):
+            l = str(l)
+            w = self.params["w" + l]
+            b = self.params["b" + l]
+            h, _ = affine(h, w, b)  # Affine layer
+            h, _ = relu(h)  # Activation (ReLU)
+
+        # Output layer, simply an affine
+        output, _ = affine(h, self.params["w_out"], self.params["b_out"])
+        return output
 
     def prediction_save_cache(self, x):
         """
@@ -90,28 +132,6 @@ class NeuralNet(object):
         output, cache = affine(h, self.params["w_out"], self.params["b_out"])
         caches["affine_out"] = cache
         return output, caches
-
-    def prediction(self, x):
-        """
-        Compute prediction for the fully-connected net as test time (without
-        saving cache and no-dropout).
-
-        Input: 
-            x: A numpy array of input data, shape (N, D)
-        Return:
-            output: Output prediction/prediction of label, shape (N, M)
-        """
-        h = x  # Input into the next layer or previous hidden activation
-        for l in range(self.n_hidden):
-            l = str(l)
-            w = self.params["w" + l]
-            b = self.params["b" + l]
-            h, _ = affine(h, w, b)  # Affine layer
-            h, _ = relu(h)  # Activation (ReLU)
-
-        # Output layer, simply an affine
-        output, _ = affine(h, self.params["w_out"], self.params["b_out"])
-        return output
 
     def prediction_baysian_dropout(self, x, k=10):
         """
@@ -272,3 +292,115 @@ class NeuralNet(object):
                 )
             if save_interval(step):
                 self.save(f"data/partial-train/model-{rand}_step-{step}")
+
+
+class NeuralNetAdaptive(NeuralNetBase):
+    def prediction_old(self, x, target):
+        """
+        Compute prediction for the fully-connected net as test time (without
+        saving cache and no-dropout).
+
+        Input: 
+            x: A numpy array of input data, shape (N, D)
+            target: The target for the adaptive NN
+        Return:
+            output: Output prediction/prediction of label, shape (N, M)
+        """
+        h = x  # Input into the next layer or previous hidden activation
+        for l in range(self.n_hidden):
+            l = str(l)
+            w = self.params["w" + l]
+            b = self.params["b" + l]
+            h, _ = affine(h, w, b)  # Affine layer
+            h, _ = relu(h)  # Activation (ReLU)
+        # Output layer, simply an affine
+        output, cache = affine(h, self.params["w_out"], self.params["b_out"])
+        return output
+
+        # Technically this is not the real z but the 1/N term only scales z (we
+        # can think of this as equivalent to scaling β by 1/N).
+        # This is to match how dout works in NeuralNetOffline (see line: 190)
+        N, D = x.shape
+        z = (output - target) / N
+
+        # Only trainable paramters in the adaptive case are the last layer weights
+        # So we only update the output layer weights (using e-mod)
+        _, dw, db = w_hat_dot_e_mod(z, cache)
+
+        # Update the weights
+        self.params["w_out"] -= self.beta * dw
+        self.params["b_out"] -= self.beta * db
+        return output
+
+    def prediction(self, x, z):
+        """
+        Compute prediction for the fully-connected net as test time (without
+        saving cache and no-dropout).
+
+        Input: 
+            x: A numpy array of input data, shape (N, D)
+            z: Diff between y-y_des for the func approx (N, M) (1,2) in this case
+        Return:
+            output: Output prediction/prediction of label, shape (N, M)
+        """
+        h = x  # Input into the next layer or previous hidden activation
+        for l in range(self.n_hidden):
+            l = str(l)
+            w = self.params["w" + l]
+            b = self.params["b" + l]
+            h, _ = affine(h, w, b)  # Affine layer
+            h, _ = relu(h)  # Activation (ReLU)
+        # Output layer, simply an affine
+        output, cache = affine(h, self.params["w_out"], self.params["b_out"])
+
+        # Technically this is not the real z but the 1/N term only scales z (we
+        # can think of this as equivalent to scaling β by 1/N).
+        # This is to match how dout works in NeuralNetOffline (see line: 190)
+        N, D = x.shape
+        z = z / N
+
+        # Only trainable paramters in the adaptive case are the last layer weights
+        # So we only update the output layer weights (using e-mod)
+        _, dw, db = self.w_hat_dot_e_mod(z, cache)
+
+        # Update the weights
+        self.params["w_out"] -= self.beta * dw
+        self.params["b_out"] -= self.beta * db
+        return output
+
+    def w_hat_dot_e_mod(self, dout, cache):
+        """
+        Modification of d_affine (from utils.py) that adds e-modification.
+
+        Note: This can ONLY be used for the last layer of weights (at least with
+        this version of e-mod... there may be variants that allow for backprop)
+
+        Input:
+            dout: Upstream derivative, shape (N, M) == dloss/dout
+            cache: Tuple of:
+                x: Input data, shape (N, D)
+                w: Weights, shape (D, M)
+                b: Biases, shape (M,)
+        Return:
+            dx: Gradient with respect to x, shape (N, D)  == dloss/dx
+            dw: Gradient with respect to w, shape (D, M)  == dloss/dw
+            db: Gradient with respect to b, shape (M,)  == dloss/db
+        """
+        x, w, b = cache
+
+        dx = dout @ w.T  # d_loss/dx = d_loss/dout * dout/dx
+        dw = x.T @ dout
+        db = np.sum(dout.T, axis=1)  # Sum to make shape (M,)
+
+        # E-mod portion
+        w_emod = self.nu * np.sum(dout.T, axis=1) * w
+        b_emod = self.nu * np.sum(dout.T, axis=1) * b  # 0 # TODO: figure this out!!!
+
+        dx = np.clip(dx, -self.grad_clip, self.grad_clip)
+        dw = np.clip(dw, -self.grad_clip, self.grad_clip)
+        db = np.clip(db, -self.grad_clip, self.grad_clip)
+
+        # fmt: off
+        print(f"Sum of weights: dw={np.sum(dw)}, db={np.sum(db)}, w_emod={np.sum(w_emod)}, b_emod={np.sum(b_emod)}")
+        # fmt: on
+        return dx, dw, db
