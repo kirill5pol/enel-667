@@ -174,7 +174,7 @@ class BacksteppingController(object):
         # fmt: off
         # print(f"u={u[0]:6.3f}, dx=({dx2[0]},{dx4[0]}) v_dot={v_dot[0]}, v_dot_max={self.v_dot_max[0]}, state={state[0]:6.3f},{state[1]:6.3f},{state[2]:6.3f},{state[3]:6.3f}")
         # print(f"u={u:6.3f}, dx=({dx2},{dx4}) v_dot={v_dot}, v_dot_max={self.v_dot_max}, state={state[0]:6.3f},{state[1]:6.3f},{state[2]:6.3f},{state[3]:6.3f}")
-        print(f"u={u:6.3f}, f2_hat={f2_hat:6.3f}")
+        print(f"u={u:6.3f}, f2_hat={f2_hat:6.3f}, f4_hat={f4_hat:6.3f}")
         # fmt: on
         return u
 
