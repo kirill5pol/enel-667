@@ -5,7 +5,6 @@ from gym_brt.control import flip_and_hold_policy as fhp
 import numpy as np
 import fire
 
-
 def f_real(x, u, zs, nn, b):
     """
     Exact solutions to the functions in the backstepping controller.
@@ -101,6 +100,9 @@ class BacksteppingController(object):
         self.v_dot_max = -1e6  # Some large initial negative number
         self.prev_u = 0
 
+        self.v_dot_max = -1000  # Some initial negative number
+        self.prev_u = 0
+
     def action(self, state, step):
         # b information:
         #     The value of k_u_alpha_dot = 49.1493074 in the linearized version
@@ -176,6 +178,7 @@ class BacksteppingController(object):
         return u
 
 
+<<<<<<< HEAD
 def run_backstepping(
     use_simulator=True,
     frequency=1000,
@@ -201,6 +204,13 @@ def run_backstepping(
         while True:
             state = env.reset()
             # env.qube.state = np.random.randn(4) * 0.00001
+=======
+    bs = BacksteppingController()
+    with QubeBalanceEnv(use_simulator=True, frequency=250) as env:
+        while True:
+            state = env.reset()
+            env.qube.state = np.random.randn(4) * 0.00001
+>>>>>>> a3bfdabf4741126ac14b14e2262fcc8edb672f66
             state, _, done, _ = env.step(np.array([0]))
             step = 0
             print("\n\nResetting\n\n")
