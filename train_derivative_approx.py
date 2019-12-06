@@ -1,4 +1,4 @@
-from neural_net import NeuralNet
+from neural_net import NeuralNetOffline
 import numpy as np
 import argparse
 
@@ -175,7 +175,7 @@ def main():
     xs_test, ys_test = gen_xs(ne, generate_derivatives, generate_u, "normal")
 
     # Create the neural network
-    nn = NeuralNet([200, 200], D, M, reg, dropout)
+    nn = NeuralNetOffline([200, 200], D, M, reg, dropout)
 
     # Run the train loop and save the network (works even if you stop training early)
     try:

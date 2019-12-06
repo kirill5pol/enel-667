@@ -8,6 +8,9 @@ class HighPassFilter(object):
         self.frequency = frequency
         self.fc = fc
 
+    def reset(self):
+        self.x_dot_cstate = 0
+
     def __call__(self, x):
         x_dot = -(self.fc ** 2) * self.x_dot_cstate + self.fc * x
         self.x_dot_cstate += (-self.fc * self.x_dot_cstate + x) / self.frequency
@@ -33,7 +36,12 @@ def mean_percent_error(nn, xs, ys):
     y_hats = nn.prediction(xs)  # Get the predicted outputs
     assert y_hats.shape == ys.shape
 
-    return np.mean(np.abs((ys - y_hats) / ys))
+    a = np.abs((ys - y_hats))
+    b = ys
+    c = np.divide(a, b, out=np.zeros_like(a), where=b != 0)
+    mpe = np.mean(c)
+    # mpe = np.mean(np.abs((ys - y_hats) / ys))
+    return mpe
 
 
 def test_networks(filenames, xs, ys):

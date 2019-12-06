@@ -13,6 +13,9 @@ from utils import (
 import numpy as np
 import pickle
 
+# Pretty printing of numpy arrays
+np.set_printoptions(formatter={"float": "{: 0.5f}".format})
+
 
 class NeuralNetBase(object):
     def __init__(
@@ -65,6 +68,10 @@ class NeuralNetBase(object):
         self.params["w_out"] = weight_init(input_dims[-1], output_dim)
         self.params["b_out"] = bias_init(output_dim)
 
+        # This part allows for data whitening at the output layer
+        self.whiten_mu = np.zeros((output_dim))
+        self.whiten_sigma = np.ones((output_dim))
+
     def save(self, filename):
         """Save paramters to `filename`."""
         with open(filename, "wb") as f:
@@ -76,12 +83,12 @@ class NeuralNetBase(object):
         with open(filename, "rb") as f:
             self.params = pickle.load(f)
 
-    def prediction(self, x, z):
+    def prediction(self, x, z=None):
         raise NotImplementedError
 
 
 class NeuralNetOffline(NeuralNetBase):
-    def prediction(self, x, z):
+    def prediction(self, x, z=None):
         """
         Compute prediction for the fully-connected net as test time (without
         saving cache and no-dropout).
@@ -203,7 +210,7 @@ class NeuralNetOffline(NeuralNetBase):
             grads["b" + l] = db + self.reg * self.params["b" + l]
 
         # Clip gradients if enabled - really helps stability! ==================
-        if self.grad_clip is not False:
+        if self.grad_clip:
             for key, grad in grads.items():
                 grads[key] = np.clip(grads[key], -self.grad_clip, self.grad_clip)
 
@@ -230,6 +237,7 @@ class NeuralNetOffline(NeuralNetBase):
         batch_size=32,
         n_steps=1e5,
         print_interval=1000,
+        save_interval=1000,
         lr=0.001,
     ):
         """
@@ -250,13 +258,17 @@ class NeuralNetOffline(NeuralNetBase):
             save_interval: Either a int or a function that take step number and
                 returns `True` if it should save at that step.
             lr: learning rate (or beta)
+
+        Return:
+            mpe_train_arr: History of mean percent error for train set
+            mpe_test_arr: History of mean percent error for test set
         """
         xs = np.asarray(xs)  # Convert to numpy array if not already one
         ys = np.asarray(ys)
         N, D = xs.shape
         Ny, M = ys.shape
-        assert M == self.output_dim  # Check that the output dim matches the NN
-        assert D == self.input_dim  # Check that the output dim matches the NN
+        assert M == self.M  # Check that the output dim matches the NN
+        assert D == self.D  # Check that the output dim matches the NN
         assert N == Ny  # Check that xs and ys have the same number of samples
 
         Nx_test, D_test = xs_test.shape
@@ -266,16 +278,21 @@ class NeuralNetOffline(NeuralNetBase):
 
         # If print_interval is not a function convert it to one
         if not callable(print_interval):
+            pi = print_interval
             # Return true if step is a multiple of print_interval
-            print_interval = lambda step: step % print_interval == 0
+            print_interval = lambda step: step % pi == 0
 
         # If save_interval is not a function convert it to one
         if not callable(save_interval):
+            si = save_interval
             # Return true if step is a multiple of save_interval
-            save_interval = lambda step: step % save_interval == 0
+            save_interval = lambda step: step % si == 0
 
         rand = np.random.randint(1000)
 
+        # Save mean percent error on test and train
+        mpe_train_arr = np.zeros((int(n_steps),))
+        mpe_test_arr = np.zeros((int(n_steps),))
         for step in range(int(n_steps)):
             # Sample a minibatch from the samples
             indices = np.random.choice(N, size=batch_size, replace=False)
@@ -284,14 +301,29 @@ class NeuralNetOffline(NeuralNetBase):
             self.gradient_step(grads, lr=lr)
 
             if print_interval(step):
+                # fmt: off
                 # Calculate mean percent error
                 mpe_train = mean_percent_error(self, xs, ys)
                 mpe_test = mean_percent_error(self, xs_test, ys_test)
-                print(
-                    f"MSE loss: {loss:6.3f}, MPE train: {mpe_train:6.3f}, MPE test: {mpe_test:6.3f}, train step: {step}"
-                )
+                mpe_train_arr[step] = mpe_train
+                mpe_test_arr[step] = mpe_test
+                print(f"MSE loss: {loss:6.3f}, MPE train: {mpe_train:6.3f}, MPE test: {mpe_test:6.3f}, train step: {step}")
+
+                # Print out a single example prediction
+                x_ex = x_batch[0]
+                y_ex = y_batch[0]
+                y_pred_ex = self.prediction(x_ex)
+                x_ex, y_ex, y_pred_ex = x_ex.reshape(-1), y_ex.reshape(-1), y_pred_ex.reshape(-1)
+
+                # x: A numpy array of input data, shape (N, D)
+                # output: Output prediction/prediction of label, shape (N, M)
+
+                print(f"Example: y={y_ex}, y_pred={y_pred_ex}, diff={y_ex-y_pred_ex}, x={x_ex}")
+                # fmt: on
+
             if save_interval(step):
                 self.save(f"data/partial-train/model-{rand}_step-{step}")
+        return mpe_train_arr, mpe_test_arr
 
 
 class NeuralNetAdaptive(NeuralNetBase):
@@ -396,9 +428,14 @@ class NeuralNetAdaptive(NeuralNetBase):
         w_emod = self.nu * np.sum(dout.T, axis=1) * w
         b_emod = self.nu * np.sum(dout.T, axis=1) * b  # 0 # TODO: figure this out!!!
 
-        dx = np.clip(dx, -self.grad_clip, self.grad_clip)
-        dw = np.clip(dw, -self.grad_clip, self.grad_clip)
-        db = np.clip(db, -self.grad_clip, self.grad_clip)
+        # Subtract the emod portion
+        dw -= w_emod
+        db -= b_emod
+
+        if self.grad_clip:
+            dx = np.clip(dx, -self.grad_clip, self.grad_clip)
+            dw = np.clip(dw, -self.grad_clip, self.grad_clip)
+            db = np.clip(db, -self.grad_clip, self.grad_clip)
 
         # fmt: off
         print(f"Sum of weights: dw={np.sum(dw)}, db={np.sum(db)}, w_emod={np.sum(w_emod)}, b_emod={np.sum(b_emod)}")

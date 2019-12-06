@@ -98,7 +98,7 @@ np.random.seed(231)
 N, D, H1, H2, O = 5, 4, 10, 10, 1
 X = np.random.randn(N, D)
 y = np.random.randn(N, O)
-model = NeuralNet(hidden_dims=[H1, H2], input_dim=D, output_dim=O)
+model = NeuralNetOffline(hidden_dims=[H1, H2], input_dim=D, output_dim=O)
 loss, grads = model.loss(X, y)
 print("Initial loss: ", loss)
 # Most of the errors should be on the order of e-7 or smaller.
@@ -113,7 +113,7 @@ for name in sorted(grads):
 # Test on square root problem ==================================================
 xs = np.random.randint(100, size=int(1e4)).reshape(-1, 1)
 ys = np.sqrt(xs)
-nn = NeuralNet(input_dim=1, output_dim=1, reg=0.0)
+nn = NeuralNetOffline(input_dim=1, output_dim=1, reg=0.0)
 nn.train_loop(xs, ys, batch_size=32, n_steps=int(1e4), print_steps=500, lr=0.01)
 for i, p in [(i, f"{nn.prediction([i])[0][0]:6.3f}") for i in range(-10, 10)]:
     print(np.sqrt(i), p)
@@ -122,7 +122,7 @@ for i, p in [(i, f"{nn.prediction([i])[0][0]:6.3f}") for i in range(-10, 10)]:
 # Test on squaring problem =====================================================
 xs = np.random.randint(20, size=int(1e5)).reshape(-1, 1) - 10
 ys = xs ** 2
-nn = NeuralNet(input_dim=1, output_dim=1, hidden_dims=[10, 10], reg=0.001)
+nn = NeuralNetOffline(input_dim=1, output_dim=1, hidden_dims=[10, 10], reg=0.001)
 nn.train_loop(xs, ys, batch_size=64, n_steps=int(1e4), print_steps=100, lr=0.001)
 for i, p in [(i, f"{nn.prediction([i])[0][0]:6.3f}") for i in range(-10, 10)]:
     print(i ** 2, p)
