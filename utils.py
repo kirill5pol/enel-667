@@ -1,4 +1,5 @@
 from gym_brt.control import flip_and_hold_policy
+from scipy.signal import savgol_filter
 import numpy as np
 
 
@@ -15,6 +16,41 @@ class HighPassFilter(object):
         x_dot = -(self.fc ** 2) * self.x_dot_cstate + self.fc * x
         self.x_dot_cstate += (-self.fc * self.x_dot_cstate + x) / self.frequency
         return x_dot
+
+
+class LowPassFilter(object):
+    def __init__(self, frequency, rc=50):
+        self.y_prev = 0
+        self.frequency = frequency
+        self.alpha = 1 / (1 + frequency * rc)
+
+    def reset(self):
+        self.y_prev = 0
+
+    def __call__(self, x):
+        y = self.alpha * x + (1 - self.alpha) * self.y_prev
+        return y
+
+
+class SGFilter(object):
+    def __init__(self, window_size=5, order=1, deriv=0):
+        self.ws = window_size
+        self.o = order
+        self.deriv = deriv
+        self.data = [0.0 for _ in range(self.ws)]
+
+    def reset(self):
+        self.data = [0.0 for _ in range(self.ws)]
+
+    def __call__(self, x):
+        self.data.append(x)
+        length = len(self.data)
+        npd = np.array(self.data[length - self.ws :])
+
+        if length >= self.ws:
+            return savgol_filter(npd, self.ws, self.o, deriv=self.deriv)[-1]
+        else:
+            raise ValueError("Data length is not sufficient!!!")
 
 
 def mean_percent_error(nn, xs, ys):
