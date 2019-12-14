@@ -1,6 +1,7 @@
 from neural_net import NeuralNetOffline, NeuralNetAdaptive
 from gym_brt.envs import QubeSwingupEnv, QubeBalanceEnv
 from gym_brt.control import flip_and_hold_policy as fhp
+from gym_brt.control import pd_tracking_control_policy
 from utils import LowPassFilter, HighPassFilter, SGFilter
 
 import numpy as np
@@ -28,7 +29,7 @@ class DataRunner(object):
         self.i = 0
         self.n_examples = n_examples
 
-        # Reason why this isn't local is that you may want to print this out later
+        # Reason why this isn't local var is that you may want to print this out later
         self.filename = f"data/old_controller_run/{np.random.randint(1000)}.npy"
 
     def step(self, x, u, αs, α_dots, b):
@@ -106,6 +107,20 @@ def derivatives(x, u, nn=None, b=None):
     return [theta_dot, alpha_dot_dot, alpha_dot, alpha_dot_dot]
 
 
+def b_fn(alpha):
+    g = 9.81  # Gravity constant
+    Rm, kt, km = 8.4, 0.042, 0.042  # Motor
+    mr, Lr, Dr = 0.095, 0.085, 0.00027  # Rotary Arm
+    mp, Lp, Dp = 0.024, 0.129, 0.00005  # Pendulum Link
+    Jp, Jr = mp * Lp ** 2 / 12, mr * Lr ** 2 / 12  # Moments of inertia
+
+    return ((0.042 / 8.4) * 2.0 * Lp * Lr * mp * (-4.0) * np.cos(alpha)) / (
+        4.0 * Lp ** 2 * Lr ** 2 * mp ** 2 * np.cos(alpha) ** 2
+        - (4.0 * Jp + Lp ** 2 * mp)
+        * (4.0 * Jr + Lp ** 2 * mp * np.sin(alpha) ** 2 + 4.0 * Lr ** 2 * mp)
+    )
+
+
 class BacksteppingController(object):
     def __init__(
         self,
@@ -157,85 +172,43 @@ class BacksteppingController(object):
     def action(self, state, step):
         # b information:
         #     The value of k_u_alpha_dot = 49.1493074 in the linearized version
-        #     For the full system max was: 9829.27
         b = 49.1493074
 
         k_scale = 2
         k1, k2, k3, k4 = k_scale * 1, k_scale * 1, k_scale * 2, k_scale * 2
         x1, x2, x3, x4 = state
 
-        # u = self.prev_u  # fhp(state)[0]
         u = self.sgf_u(self.prev_u)
+        x1_dot, x2_dot, x3_dot, x4_dot = derivatives(state, u)
+
         f1_hat, f3_hat = 0, 0
 
-        α1 = 0
+        α1 = 3.14 / 3 if np.sin(step / (self.frequency)) > 0 else -3.14 / 3
         z1 = x1 - α1
-        # α1_dot = (α1 - self.α1_prev) * self.frequency
         α1_dot = self.hpf_α1(α1)
+        f1_hat = 0
 
         α2 = -k1 * z1 - f1_hat + α1_dot
         z2 = x2 - α2
-        # α2_dot = (α2 - self.α2_prev) * self.frequency
         α2_dot = self.hpf_α2(α2)
+        f2_hat = self.sgf_f2(x2_dot) - x3
 
-        theta_dot_dot = derivatives(state, u)[1]
-        f2_hat = self.sgf_f2(theta_dot_dot - x3)
-
-        α3 = -k2 * z2 - f2_hat + α2_dot - z1
+        α3 = -2 * (k2 * z2 - z1 - f2_hat + α2_dot)
         z3 = x3 - α3
-        # α3_dot = (α3 - self.α3_prev) * self.frequency
         α3_dot = self.hpf_α3(α3)
+        f3_hat = 0
 
-        α4 = -(k3 / 2) * (2 * z3 + α3) - f3_hat + (α3_dot / 2) - (z2 / 4)
+        α4 = -k3 * (2 * z3 + α3) - (z2 / 2) - 2 * f3_hat + α3_dot
         z4 = x4 - α4
-        # α4_dot = (α4 - self.α4_prev) * self.frequency
         α4_dot = self.hpf_α4(α4)
+        f4_hat = self.sgf_f4(x4_dot) - b * u
 
-        alpha_dot_dot = derivatives(state, u)[3]
-        f4_hat = self.sgf_f4(alpha_dot_dot - b * u)
-
-        u = (1 / (2 * b)) * (
-            -k4 * (2 * z4 + α4)
-            - 2 * f4_hat
-            + α4_dot
-            - (2 * z3 + α3)
-            - ((α4 * (2 * z3 + α3)) / (2 * z4 + α4))
-            + ((z2 + α2) / (2 * (2 * z4 + α4)))
-        )
-        u = np.clip(u, -10, 10)
-
-        print([α1, α2, α3, α4])
-        print([α1_dot, α2_dot, α3_dot, α4_dot])
-
-        # # Calculate dmax and v_dot
-        # f1_actual, f2_actual, f3_actual, f4_actual = self.approximator(
-        #     state, u, self.nn, b
-        # )
-        # # Technically incorrect (but should work due to symmetry)
-        # dx1, dx3 = np.abs(f1_actual - f1_hat), np.abs(f3_actual - f3_hat)
-        # dx2, dx4 = np.abs(f2_actual - f2_hat), np.abs(f4_actual - f4_hat)
-        # v_dot = (
-        #     -k1 * z1 ** 2
-        #     - k2 * z2 ** 2
-        #     - k3 * (z3 + x3) ** 2
-        #     - k4 * (z4 + x4) ** 2
-        #     + dx2 * z2 ** 2
-        #     + dx4 * (z4 + x4) ** 2
-        # )
-        # if v_dot > self.v_dot_max:
-        #     self.v_dot_max = v_dot
-
-        # # fmt: off
-        # print(f"u={u[0]:6.3f}, dx=({dx2[0]},{dx4[0]}) v_dot={v_dot[0]}, v_dot_max={self.v_dot_max[0]}, state={state[0]:6.3f},{state[1]:6.3f},{state[2]:6.3f},{state[3]:6.3f}")
-        # print(f"u={u:6.3f}, dx=({dx2},{dx4}) v_dot={v_dot}, v_dot_max={self.v_dot_max}, state={state[0]:6.3f},{state[1]:6.3f},{state[2]:6.3f},{state[3]:6.3f}")
-        # print(f"u={u:6.3f}, f2_hat={f2_hat:6.3f}, f4_hat={f4_hat:6.3f}")
+        u = (1 / (2 * b)) * (-k4 * (2 * z4 + α4) - 2 * z3 - 2 * f4_hat - α3 + α4_dot)
 
         if self.dr:
-            # (self,     x,     u,  αs,               α_dots,                          b):
             self.dr.step(
                 state, u, [α1, α2, α3, α4], [α1_dot, α2_dot, α3_dot, α4_dot], b
             )
-        # fmt: on
         return (u,)
 
 
@@ -269,10 +242,9 @@ def run_backstepping(
         while True:
             state = env.reset()
             bs.reset()
-            env.qube.state = np.random.randn(4) * 0.01
             state, _, done, _ = env.step(np.array([0]))
             step = 0
-            print("\n\nResetting\n\n")
+
             while not done:
                 action = bs.action(state, step)
                 state, _, done, _ = env.step(action)

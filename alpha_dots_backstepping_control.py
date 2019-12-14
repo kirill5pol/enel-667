@@ -186,35 +186,11 @@ class BacksteppingController(object):
             - ((α4 * (2 * z3 + α3)) / (2 * z4 + α4))
             + ((z2 + α2) / (2 * (2 * z4 + α4)))
         )
-        # u = np.clip(u, -10, 10)
-
-        # # Calculate dmax and v_dot
-        # f1_actual, f2_actual, f3_actual, f4_actual = self.approximator(
-        #     state, u, self.nn, b
-        # )
-        # # Technically incorrect (but should work due to symmetry)
-        # dx1, dx3 = np.abs(f1_actual - f1_hat), np.abs(f3_actual - f3_hat)
-        # dx2, dx4 = np.abs(f2_actual - f2_hat), np.abs(f4_actual - f4_hat)
-        # v_dot = (
-        #     -k1 * z1 ** 2
-        #     - k2 * z2 ** 2
-        #     - k3 * (z3 + x3) ** 2
-        #     - k4 * (z4 + x4) ** 2
-        #     + dx2 * z2 ** 2
-        #     + dx4 * (z4 + x4) ** 2
-        # )
-        # if v_dot > self.v_dot_max:
-        #     self.v_dot_max = v_dot
-
-        # fmt: off
-        # print(f"u={u[0]:6.3f}, dx=({dx2[0]},{dx4[0]}) v_dot={v_dot[0]}, v_dot_max={self.v_dot_max[0]}, state={state[0]:6.3f},{state[1]:6.3f},{state[2]:6.3f},{state[3]:6.3f}")
-        # print(f"u={u:6.3f}, dx=({dx2},{dx4}) v_dot={v_dot}, v_dot_max={self.v_dot_max}, state={state[0]:6.3f},{state[1]:6.3f},{state[2]:6.3f},{state[3]:6.3f}")
-        print(f"u={u:6.3f}, f2_hat={f2_hat:6.3f}, f3_hat={f3_hat:6.3f}, f4_hat={f4_hat:6.3f}")
 
         if self.dr:
-            # (self,     x,     u,  αs,               α_dots,                          b):
-            self.dr.step(state, u, [α1, α2, α3, α4], [α1_dot, α2_dot, α3_dot, α4_dot], b)
-        # fmt: on
+            self.dr.step(
+                state, u, [α1, α2, α3, α4], [α1_dot, α2_dot, α3_dot, α4_dot], b
+            )
         return (u,)
 
 
@@ -224,7 +200,7 @@ def run_backstepping(
     adaptive=True,
     approximator="nn",  # Options are `real` and `nn`
     data_runner=None,  # Should be the number of steps to save after
-    loadfile=None,  # "data/model-465_step-140000",
+    loadfile="data/model-465_step-140000",
     render=True,
     grad_clip=5,  # Can be a number or False
     beta=0.001,
@@ -247,14 +223,13 @@ def run_backstepping(
         env = QubeBalanceEnv(use_simulator=use_simulator, frequency=frequency)
         while True:
             state = env.reset()
-            env.qube.state = np.random.randn(4) * 0.01
             state, _, done, _ = env.step(np.array([0]))
             step = 0
-            print("\n\nResetting\n\n")
-            while abs(env._theta) < (np.pi / 2) and abs(env._alpha) < (np.pi / 4):
+
+            while not done:
                 action = bs.action(state, step)
                 state, _, done, _ = env.step(action)
-                if step % 1 == 0:  # render_fn(step):
+                if render_fn(step):
                     env.render()
                 step += 1
     finally:

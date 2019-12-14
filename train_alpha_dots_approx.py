@@ -18,26 +18,26 @@ def get_data(loadfile, frac_test=0.3):
     x_dots = params["x_dots"]  # Shape (N, 4)
     α_dots = params["α_dots"]  # Shape (N, 4)
     N, _ = xs.shape
-    # Since α_dots that we get are meaningless...
-    α1_dots = 0
-    # α2_dots = np.random.randn(N) * 5
-    # α3_dots = np.random.randn(N) * 5
-    # α4_dots = np.random.randn(N) * 5
+
+    α1_dots = α_dots[:, 0]
     α2_dots = α_dots[:, 1]
     α3_dots = α_dots[:, 2]
     α4_dots = α_dots[:, 3]
+
     # Get the values that we actually want (as vectors)
     f2s = -xs[:, 2] + x_dots[:, 1] - α1_dots  # -x3 + x2_dot - α2_dot
     f3s = 0.5 * α2_dots  # -α3_dot / 2
-    f4s = -0.5 * α3_dots  # - α4_dot / 2
-    # f4s = -bs[:, 0] * us[:, 0] - 0.5 * α3_dots  # -bu + x4_dot - α4_dot / 2
+    f4s = -bs[:, 0] * us[:, 0] - 0.5 * α3_dots  # -bu + x4_dot - α4_dot / 2
+
     f_hats = np.zeros((N, 3))  # 4 function approximators
     f_hats[:, 0] = f2s
     f_hats[:, 1] = f3s
     f_hats[:, 2] = f4s
+
     # Get number of examples in test & train
     n_test = int(frac_test * N)
     n_train = N - n_test
+
     # Create train and test sets
     xs_train = xs[:n_train, :]
     f_hats_train = f_hats[:n_train, :]

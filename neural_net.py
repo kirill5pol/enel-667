@@ -327,43 +327,6 @@ class NeuralNetOffline(NeuralNetBase):
 
 
 class NeuralNetAdaptive(NeuralNetBase):
-    def prediction_old(self, x, target):
-        """
-        Compute prediction for the fully-connected net as test time (without
-        saving cache and no-dropout).
-
-        Input: 
-            x: A numpy array of input data, shape (N, D)
-            target: The target for the adaptive NN
-        Return:
-            output: Output prediction/prediction of label, shape (N, M)
-        """
-        h = x  # Input into the next layer or previous hidden activation
-        for l in range(self.n_hidden):
-            l = str(l)
-            w = self.params["w" + l]
-            b = self.params["b" + l]
-            h, _ = affine(h, w, b)  # Affine layer
-            h, _ = relu(h)  # Activation (ReLU)
-        # Output layer, simply an affine
-        output, cache = affine(h, self.params["w_out"], self.params["b_out"])
-        return output
-
-        # Technically this is not the real z but the 1/N term only scales z (we
-        # can think of this as equivalent to scaling β by 1/N).
-        # This is to match how dout works in NeuralNetOffline (see line: 190)
-        N, D = x.shape
-        z = (output - target) / N
-
-        # Only trainable paramters in the adaptive case are the last layer weights
-        # So we only update the output layer weights (using e-mod)
-        _, dw, db = w_hat_dot_e_mod(z, cache)
-
-        # Update the weights
-        self.params["w_out"] -= self.beta * dw
-        self.params["b_out"] -= self.beta * db
-        return output
-
     def prediction(self, x, z):
         """
         Compute prediction for the fully-connected net as test time (without
@@ -437,7 +400,4 @@ class NeuralNetAdaptive(NeuralNetBase):
             dw = np.clip(dw, -self.grad_clip, self.grad_clip)
             db = np.clip(db, -self.grad_clip, self.grad_clip)
 
-        # fmt: off
-        print(f"Sum of weights: dw={np.sum(dw)}, db={np.sum(db)}, w_emod={np.sum(w_emod)}, b_emod={np.sum(b_emod)}")
-        # fmt: on
         return dx, dw, db
